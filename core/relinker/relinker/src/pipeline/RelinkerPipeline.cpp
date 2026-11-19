@@ -406,6 +406,7 @@ RelinkResult RelinkerPipeline::Relink() {
         return definedTlsSymbolValue(symIdx, pos).has_value();
     };
 
+    std::uint64_t ignoredSlotAddends = 0;
     auto extractRela = [&](const FileByteOffset relaOff, const ByteCount relaSize, const bool plt) {
         for (ByteCount off = 0; relaSize >= relaEntSize && off <= relaSize - relaEntSize; off += relaEntSize) {
             const FileByteOffset pos = relaEntryPos(relaOff, off);
@@ -466,12 +467,20 @@ RelinkResult RelinkerPipeline::Relink() {
             const bool weak = (raw[symOff + 4] >> 4) == STB_WEAK;
             const auto symbolType = static_cast<std::uint8_t>(raw[symOff + 4] & 15);
             const bool function = symbolType == STT_FUNC;
-            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries, ownModules), relType, pos, rOffset, rAddend, weak, function, symbolType});
+            const bool importSlot = relType == R_X86_64_GLOB_DAT || relType == R_X86_64_JUMP_SLOT;
+            if (importSlot && rAddend != 0)
+                ++ignoredSlotAddends;
+            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries, ownModules), relType, pos, rOffset, importSlot ? 0 : rAddend, weak, function, symbolType});
         }
     };
 
     extractRela(dynRelaOffset, dynRelaSize, false);
     extractRela(dynJmpRelOffset, dynJmpRelSize, true);
+    if (ignoredSlotAddends != 0) {
+        std::ostringstream message;
+        message << "GLOB_DAT/JUMP_SLOT addends ignored per the x86-64 psABI: " << ignoredSlotAddends << "\n";
+        progress.Message(message.str());
+    }
 
     std::vector<std::pair<VirtualAddress, VirtualAddress>> unwindRanges;
     std::vector<std::vector<CodeRange>> segmentUnwindRanges(executableSegments.size());
