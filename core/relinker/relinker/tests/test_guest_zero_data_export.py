@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 
+from test_guest_needed_modules import executable_with_needed
 from test_guest_none_relocations import TARGET, module
 
 ERROR = "Guest export at address 0 cannot be resolved on Linux: shared"
@@ -60,6 +61,25 @@ def main():
                 else:
                     assert result.returncode == 2 and error in result.stderr, (index, system, result.stderr)
                     assert not output.exists(), (index, system)
+    for label, value, error in (("zero", 0, ERROR), ("nonzero", 0x2000, None)):
+        case = work / f"module-to-module-{label}"
+        modules = case / "sce_module"
+        modules.mkdir(parents=True)
+        (modules / "provider.prx").write_bytes(zero_module(0x11, value))
+        (modules / "consumer.prx").write_bytes(module([(0x2320, (1 << 32) | 6, 0)], exported=False, symbol_info=0x11))
+        source = case / "input.elf"
+        source.write_bytes(executable_with_needed(b"consumer.prx"))
+        for system, flags, magic in TARGETS:
+            output = case / f"output-{system}.elf"
+            result = subprocess.run([str(relinker), *flags, str(source), str(output)],
+                                    capture_output=True, text=True, timeout=20)
+            if error is None or system != "linux":
+                assert result.returncode == 0, (label, system, result.stdout, result.stderr)
+                assert output.read_bytes().startswith(magic), (label, system)
+                assert (modules.parent / "app0" / "sce_module" / "consumer.prx.guest.prx").is_file(), (label, system)
+            else:
+                assert result.returncode == 2 and error in result.stderr, (label, system, result.stderr)
+                assert not output.exists(), (label, system)
     print("Guest zero address export tests passed")
 
 
