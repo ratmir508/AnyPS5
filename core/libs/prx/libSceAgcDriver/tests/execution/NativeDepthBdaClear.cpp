@@ -267,6 +267,17 @@ int main() {
 #endif
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+#ifdef _WIN32
+        const bool dmaBufOpens = true;
+#else
+        const int dmaBuf = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
+        const bool dmaBufOpens = dmaBuf >= 0;
+        if (dmaBuf >= 0) close(dmaBuf);
+#endif
+        if (!dmaBufOpens) {
+            std::printf("skipped, host imports are unavailable: /dev/udmabuf cannot be opened; native depth BDA clear not tested\n");
+            return VulkanTestSkipped;
+        }
         for (const auto consumer : {ClearConsumer::Owner, ClearConsumer::Texture, ClearConsumer::Attachment}) {
             const auto result = RunNativeClear(*device, consumer);
             if (result != 0) return result;

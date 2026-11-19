@@ -4735,6 +4735,17 @@ void CheckReusePublication(Context context, ReuseCase use) {
     }
 }
 
+static bool DmaBufDeviceOpens() {
+#ifdef _WIN32
+    return true;
+#else
+    const int fd = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
+    if (fd < 0) return false;
+    close(fd);
+    return true;
+#endif
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef __linux__
@@ -4767,6 +4778,10 @@ int main(int argc, char** argv) {
             return checked == 0u ? VulkanTestSkipped : 0;
         }
         const auto context = device->GetContext();
+        if (!DmaBufDeviceOpens() && (argc == 1 || (argc == 2 && (std::string_view(argv[1]) == "--clears" || std::string_view(argv[1]) == "--buffer-clear")))) {
+            std::printf("skipped, host imports are unavailable: /dev/udmabuf cannot be opened; native multisample depth in place not tested\n");
+            return VulkanTestSkipped;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--publication") {
             std::unique_lock lock(AgcDriver::GuestMemory::GpuMutex());
             TextureDetiler detiler(context);
