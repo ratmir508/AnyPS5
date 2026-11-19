@@ -1111,6 +1111,9 @@ if(BUILD_TESTING)
         add_test(NAME guest_zero_data_export COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_zero_data_export.py $<TARGET_FILE:relinker>)
         set_tests_properties(guest_zero_data_export PROPERTIES TIMEOUT 20)
+        add_test(NAME local_symbol_relocations COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_local_symbol_relocations.py $<TARGET_FILE:relinker>)
+        set_tests_properties(local_symbol_relocations PROPERTIES TIMEOUT 20)
         foreach(symbolInput IN ITEMS executable guest)
             foreach(symbolRelocation IN ITEMS 1 6 7)
                 add_test(NAME restricted_undefined_symbols_${symbolInput}_${symbolRelocation} COMMAND ${Python3_EXECUTABLE}

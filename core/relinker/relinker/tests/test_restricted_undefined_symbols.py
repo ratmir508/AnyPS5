@@ -96,11 +96,12 @@ def main():
                         convert(label + "-filtered", make(2), [*options, "unused-filter=1"], ERROR)
                         convert(label + "-defined-default", make(0, defined=True), options, None)
                         convert(label + "-defined-protected", make(3, defined=True), options, None)
-                        convert(label + "-defined-local", make(0, binding=0, defined=True), options, DEFINED_ERROR)
-                        convert(label + "-defined-internal", make(1, defined=True), options, DEFINED_ERROR)
-                        convert(label + "-defined-hidden", make(2, defined=True), options, DEFINED_ERROR)
+                        slotDefined = DEFINED_ERROR if relocation == 7 else None
+                        convert(label + "-defined-local", make(0, binding=0, defined=True), options, slotDefined)
+                        convert(label + "-defined-internal", make(1, defined=True), options, slotDefined)
+                        convert(label + "-defined-hidden", make(2, defined=True), options, slotDefined)
                         convert(label + "-defined-hidden-filtered", make(2, defined=True),
-                                [*options, "unused-filter=1"], DEFINED_ERROR)
+                                [*options, "unused-filter=1"], slotDefined)
     print(f"Restricted undefined symbol tests passed: {count} conversions ({'guest' if is_guest else 'executable'})")
 
 

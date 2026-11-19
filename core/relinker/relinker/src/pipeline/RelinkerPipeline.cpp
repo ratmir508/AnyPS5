@@ -407,6 +407,8 @@ RelinkResult RelinkerPipeline::Relink() {
     };
 
     std::uint64_t ignoredSlotAddends = 0;
+    std::uint64_t resolvedLocalReferences = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> localResolutions;
     auto extractRela = [&](const FileByteOffset relaOff, const ByteCount relaSize, const bool plt) {
         for (ByteCount off = 0; relaSize >= relaEntSize && off <= relaSize - relaEntSize; off += relaEntSize) {
             const FileByteOffset pos = relaEntryPos(relaOff, off);
@@ -458,6 +460,14 @@ RelinkResult RelinkerPipeline::Relink() {
             std::memcpy(&section, raw.data() + symOff + 6, sizeof(section));
             if (section == SHN_UNDEF && (raw[symOff + 4] >> 4) != STB_WEAK && (raw[symOff + 5] & 3) != 0)
                 throw RelinkerException("Undefined non-weak symbol has non-default visibility: " + name, symOff);
+            if (section != SHN_UNDEF && section < SHN_LORESERVE && (relType == R_X86_64_64 || relType == R_X86_64_GLOB_DAT) &&
+                ((raw[symOff + 4] >> 4) < STB_GLOBAL || (raw[symOff + 5] & 3) == 1 || (raw[symOff + 5] & 3) == 2)) {
+                std::uint64_t value = 0;
+                std::memcpy(&value, raw.data() + symOff + 8, sizeof(value));
+                localResolutions.push_back({rOffset, relType == R_X86_64_64 ? value + static_cast<std::uint64_t>(rAddend) : value});
+                ++resolvedLocalReferences;
+                continue;
+            }
             if (name.empty() && (raw.size() - symOff < symEntSize
                                  || std::any_of(raw.begin() + static_cast<std::ptrdiff_t>(symOff), raw.begin() + static_cast<std::ptrdiff_t>(symOff + symEntSize),
                                                 [](const std::uint8_t byte) { return byte != 0; })))
@@ -479,6 +489,11 @@ RelinkResult RelinkerPipeline::Relink() {
     if (ignoredSlotAddends != 0) {
         std::ostringstream message;
         message << "GLOB_DAT/JUMP_SLOT addends ignored per the x86-64 psABI: " << ignoredSlotAddends << "\n";
+        progress.Message(message.str());
+    }
+    if (resolvedLocalReferences != 0) {
+        std::ostringstream message;
+        message << "Defined symbol references that are local, hidden or internal resolved as RELATIVE relocations: " << resolvedLocalReferences << "\n";
         progress.Message(message.str());
     }
 
@@ -679,6 +694,9 @@ RelinkResult RelinkerPipeline::Relink() {
         std::memcpy(buf.data() + pos + 8, &info, 8);
         std::memcpy(buf.data() + pos + 16, &addend, 8);
     };
+
+    for (const auto& [target, addend] : localResolutions)
+        appendRela(dynSection.RelaData, target, static_cast<std::uint64_t>(R_X86_64_RELATIVE), static_cast<std::int64_t>(addend));
 
     auto extractLocal = [&](const FileByteOffset relaOff, const ByteCount relaSize, const bool plt) {
         for (ByteCount off = 0; relaSize >= relaEntSize && off <= relaSize - relaEntSize; off += relaEntSize) {
