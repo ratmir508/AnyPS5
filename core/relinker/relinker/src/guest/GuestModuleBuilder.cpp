@@ -28,6 +28,7 @@ namespace {
 struct GuestExport {
     std::size_t Provider;
     std::uint8_t Type;
+    bool Resolvable = true;
 };
 
 std::vector<std::string> ReadNeededNames(const Domain::SysVDynamicSection& dynamic) {
@@ -158,7 +159,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             if (symbol.Section == 0 || symbol.Section == AbsoluteSection || (symbol.Info >> 4) == 0 || symbol.Visibility == 1 || symbol.Visibility == 2) continue;
             auto& providers = exports[symbol.Name];
             const bool repeated = !providers.empty() && providers.back().Provider == images.size();
-            if (!repeated) providers.push_back({images.size(), static_cast<std::uint8_t>(symbol.Info & 15)});
+            if (!repeated) providers.push_back({images.size(), static_cast<std::uint8_t>(symbol.Info & 15), symbol.Value != 0 || symbol.Section >= 0xff00 || (symbol.Info & 15) == 2 || (symbol.Info & 15) == 6});
             if (!windows && providers.size() > 1)
                 for (const auto& provider : providers) sharedExports[symbol.Name].insert(provider.Provider);
         }
@@ -209,6 +210,12 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         std::string providers;
         for (const auto provider : shared->second) providers += " " + Io::Utf8Path(images[provider].SourcePath);
         throw Domain::RelinkerException("Ambiguous guest import " + name + " in " + importer + ": exported by" + providers);
+    };
+    const auto rejectUnresolvable = [&](const GuestExport& provider, const std::string& name, const bool weakImport) {
+        if (windows || macos || weakImport || provider.Resolvable) return;
+        Domain::RelinkerException error("Guest export at address 0 cannot be resolved on Linux: " + name);
+        error.InputPath = Io::Utf8Path(images[provider.Provider].SourcePath);
+        throw error;
     };
     const auto rename = [](std::vector<std::uint8_t>& symbols, std::vector<std::uint8_t>& strings, std::size_t index, const std::string& name) {
         if (strings.size() > std::numeric_limits<std::uint32_t>::max()) throw Domain::RelinkerException("Guest string table too large");
@@ -274,8 +281,14 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             }
             rename(dynamic.DynSymData, dynamic.DynStrData, offset / 24, declaredProvider != nullptr ? bindingName(name, declared->second) : name);
             if (executableReferences[offset / 24]) {
-                if (!macos && declaredProvider != nullptr) executableProviders.insert(declared->second);
-                else if (found->second.size() == 1) executableProviders.insert(found->second.front().Provider);
+                const bool weakImport = (dynamic.DynSymData[offset + 4] >> 4) == 2;
+                if (!macos && declaredProvider != nullptr) {
+                    executableProviders.insert(declared->second);
+                    rejectUnresolvable(*declaredProvider, name, weakImport);
+                } else if (found->second.size() == 1) {
+                    executableProviders.insert(found->second.front().Provider);
+                    rejectUnresolvable(found->second.front(), name, weakImport);
+                }
             }
         }
     }
@@ -322,6 +335,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             if (provider != nullptr) {
                 if ((symbol.Info & 15) != 0 && (symbol.Info & 15) != provider->Type) throw Domain::RelinkerException("Guest import/export type mismatch: " + symbol.Name);
                 if (provider->Type == 6 && (symbol.Info & 15) == 0 && referencedSymbols.contains(symbolIndex)) throw Domain::RelinkerException("Non-TLS relocation against guest TLS export: " + symbol.Name);
+                if (!windows && !macos && referencedSymbols.contains(symbolIndex)) rejectUnresolvable(*provider, symbol.Name, (symbol.Info >> 4) == 2);
                 if (provider->Provider != index && referencedSymbols.contains(symbolIndex)) dependencies[index].insert(provider->Provider);
                 if (!windows && !macos && declared != guestNames.end() && sharedExports.contains(symbol.Name))
                     importBindings[index].emplace(symbolIndex, bindingName(symbol.Name, provider->Provider));
